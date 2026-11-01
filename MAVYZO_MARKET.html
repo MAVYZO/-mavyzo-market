@@ -1,0 +1,1282 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MAVYZO MARKET - Boutique Geek & Tech</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://js.stripe.com/v3/" async></script>
+    <style>
+        /* Modal formulaire commande */
+        .order-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            z-index: 99999;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        .order-modal.is-open {
+            opacity: 1;
+            visibility: visible;
+        }
+        .order-modal-content {
+            background: #0d0d1a;
+            border: 1px solid #00b4ff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            width: 100%;
+            max-width: 480px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 0 30px rgba(0, 180, 255, 0.3);
+            position: relative;
+        }
+        .order-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid rgba(0, 180, 255, 0.2);
+            padding-bottom: 0.75rem;
+        }
+        .order-modal-header h2 {
+            margin: 0;
+            font-size: 1.25rem;
+            color: #00b4ff;
+        }
+        .order-modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0.25rem;
+        }
+        .order-modal-close:hover {
+            color: #00b4ff;
+        }
+        .order-form-group {
+            margin-bottom: 1rem;
+        }
+        .order-form-group label {
+            display: block;
+            margin-bottom: 0.35rem;
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+        .order-form-group input,
+        .order-form-group textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 0.6rem 0.75rem;
+            color: #fff;
+            font-family: inherit;
+            font-size: 1rem;
+        }
+        .order-form-group input:focus,
+        .order-form-group textarea:focus {
+            outline: none;
+            border-color: #00b4ff;
+            box-shadow: 0 0 0 2px rgba(0, 180, 255, 0.2);
+        }
+        .order-form-group input[aria-invalid="true"],
+        .order-form-group textarea[aria-invalid="true"] {
+            border-color: #ff3131;
+        }
+        .order-summary {
+            background: rgba(0, 180, 255, 0.05);
+            border: 1px solid rgba(0, 180, 255, 0.15);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        .order-summary-title {
+            font-weight: 600;
+            color: #00b4ff;
+            margin-bottom: 0.5rem;
+            font-size: 0.95rem;
+        }
+        .order-summary-list {
+            font-size: 0.85rem;
+            color: #ccc;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            font-family: inherit;
+        }
+        .order-summary-total {
+            margin-top: 0.75rem;
+            font-weight: 700;
+            color: #00e5ff;
+            font-size: 1rem;
+        }
+        .order-disclaimer {
+            font-size: 0.75rem;
+            color: #888;
+            text-align: center;
+            margin: 0.75rem 0 1rem;
+        }
+        .order-form-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+        }
+        .order-btn {
+            padding: 0.7rem 1.25rem;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+        }
+        .order-btn-cancel {
+            background: #222;
+            color: #ccc;
+            border: 1px solid #444;
+        }
+        .order-btn-cancel:hover {
+            background: #333;
+            color: #fff;
+        }
+        .order-btn-submit {
+            background: linear-gradient(135deg, #00b4ff, #0077cc);
+            color: #000;
+        }
+        .order-btn-submit:hover:not(:disabled) {
+            background: linear-gradient(135deg, #00e5ff, #0099ff);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 180, 255, 0.4);
+        }
+        /* Stripe Elements inputs (3 champs séparés) */
+        .stripe-input {
+            background: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            min-height: 44px;
+        }
+        .stripe-input.StripeElement--focus {
+            border-color: #00b4ff;
+            box-shadow: 0 0 0 2px rgba(0, 180, 255, 0.2);
+        }
+        .stripe-input.StripeElement--invalid {
+            border-color: #ff3131;
+        }
+        .order-toast {
+            position: fixed;
+            bottom: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #1a1a2e;
+            border: 1px solid #00b4ff;
+            border-radius: 8px;
+            padding: 0.85rem 1.25rem;
+            color: #00e5ff;
+            font-size: 0.9rem;
+            z-index: 100000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 20px rgba(0, 180, 255, 0.3);
+        }
+        .order-toast.show {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
+        .order-toast.error {
+            border-color: #ff3131;
+            color: #ff6b6b;
+            box-shadow: 0 0 20px rgba(255, 49, 49, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- Bandeau d'accueil immersif -->
+    <section class="banner">
+        <div class="banner-content">
+
+<div class="banner-top">
+    <button class="btn-mobile-menu" id="mobileMenuBtn" aria-label="Ouvrir le menu mobile">
+        <span class="hamburger"></span>
+    </button>
+
+    <h1>MAVYZO MARKET</h1>
+
+    <div class="cart-icon" id="cartIcon" role="button" tabindex="0" aria-label="Ouvrir le panier">
+        <span class="cart-symbol" aria-hidden="true">🛒</span>
+        <span class="cart-count">0</span>
+    </div>
+</div>
+          <p>Votre destination pour l'univers geek, gaming et technologie</p>
+            <!-- Barre de recherche avec filtre par catégorie (affichée sur desktop) -->
+            <div class="search-bar desktop-only">
+                <input type="text" id="searchInput" placeholder="Rechercher des produits...">
+                <select id="categoryFilter">
+                    <option value="all">Toutes les catégories</option>
+                    <option value="consoles-gaming">Consoles et gaming</option>
+                    <option value="accessoires-info">Accessoires informatiques</option>
+                    <option value="equipements-maison">Équipements pour la maison</option>
+                    <option value="decoration-geek">Décoration geek</option>
+                    <option value="figurines-collection">Figurines et objets de collection</option>
+                    <option value="accessoires-quotidien">Accessoires du quotidien</option>
+                </select>
+                <button id="searchButton">Rechercher</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Menu mobile (off-canvas) -->
+    <nav class="mobile-menu" id="mobileMenu">
+        <div class="mobile-menu-header">
+            <h2>MAVYZO MARKET</h2>
+            <button class="btn-close-menu" id="closeMenuBtn" aria-label="Fermer le menu">
+                <span>&times;</span>
+            </button>
+        </div>
+        <div class="mobile-menu-content">
+            <!-- Barre de recherche avec filtre par catégorie (affichée sur mobile) -->
+            <div class="search-bar mobile-only">
+                <input type="text" id="searchInputMobile" placeholder="Rechercher des produits...">
+                <select id="categoryFilterMobile">
+                    <option value="all">Toutes les catégories</option>
+                    <option value="consoles-gaming">Consoles et gaming</option>
+                    <option value="accessoires-info">Accessoires informatiques</option>
+                    <option value="equipements-maison">Équipements pour la maison</option>
+                    <option value="decoration-geek">Décoration geek</option>
+                    <option value="figurines-collection">Figurines et objets de collection</option>
+                    <option value="accessoires-quotidien">Accessoires du quotidien</option>
+                </select>
+                <button id="searchButtonMobile">Rechercher</button>
+            </div>
+
+            <!-- Lien Contact dans le menu mobile -->
+            <a href="contact.html" class="contact-link" aria-label="Nous contacter">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                    <polyline points="22,6 12,13 2,6"/>
+                </svg>
+                <span>Nous contacter</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Contenu principal -->
+
+<main>
+    <!-- Conteneur pour les produits -->
+    <section id="productsContainer">
+        <!-- Les produits seront injectés ici par JavaScript -->
+    </section>
+</main>
+
+<!-- Fenêtre du panier -->
+<div id="cartPanel" class="cart-panel" aria-hidden="true">
+    <div class="cart-panel-content">
+        <div class="cart-panel-header">
+            <h2>🛒 Mon panier</h2>
+            <button type="button" id="closeCart" class="close-cart" aria-label="Fermer le panier">✕</button>
+        </div>
+
+        <div id="cartItems">
+            <p class="cart-empty">Ton panier est vide.</p>
+        </div>
+
+        <div class="cart-panel-footer">
+            <p>Total : <strong id="cartTotal">0,00 €</strong></p>
+            <button type="button" id="clearCart" class="clear-cart">Vider le panier</button>
+            <button type="button" id="viewOrderButton" class="checkout-button" style="background: #6c5ce7; border-color: #6c5ce7;">Voir le récapitulatif</button>
+            <button type="button" id="checkoutButton" class="checkout-button">Continuer</button>
+            <p class="cart-note">Prototype de démonstration — aucun paiement réel.</p>
+        </div>
+    </div>
+</div>
+
+<div id="orderModal" class="order-modal" aria-hidden="true">
+      <div class="order-modal-content" role="dialog" aria-modal="true" aria-labelledby="orderTitle">
+        <div class="order-modal-header">
+          <h2 id="orderTitle">Finaliser la commande</h2>
+          <button type="button" class="order-modal-close" aria-label="Fermer">&times;</button>
+        </div>
+        <form id="orderForm" onsubmit="handleOrderSubmit(event)">
+          <div class="order-form-group">
+            <label for="customerName">Nom complet *</label>
+            <input type="text" id="customerName" name="customerName" required autocomplete="name">
+          </div>
+          <div class="order-form-group">
+            <label for="customerEmail">Email *</label>
+            <input type="email" id="customerEmail" name="customerEmail" required autocomplete="email">
+          </div>
+          <div class="order-form-group">
+            <label for="customerPhone">Téléphone *</label>
+            <input type="tel" id="customerPhone" name="customerPhone" required autocomplete="tel">
+          </div>
+
+          <!-- Adresse de livraison -->
+          <fieldset class="order-form-group" style="border:1px solid rgba(0,180,255,0.2);border-radius:8px;padding:1rem;margin:1rem 0;">
+            <legend style="color:#00b4ff;font-weight:600;padding:0 0.5rem;">📦 Adresse de livraison *</legend>
+            <div class="order-form-group">
+              <label for="shippingAddress">Adresse (rue, numéro) *</label>
+              <input type="text" id="shippingAddress" name="shippingAddress" required autocomplete="street-address">
+            </div>
+            <div class="order-form-group">
+              <label for="shippingAddress2">Complément d'adresse</label>
+              <input type="text" id="shippingAddress2" name="shippingAddress2" autocomplete="address-line2">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+              <div class="order-form-group">
+                <label for="shippingCity">Ville *</label>
+                <input type="text" id="shippingCity" name="shippingCity" required autocomplete="address-level2">
+              </div>
+              <div class="order-form-group">
+                <label for="shippingPostalCode">Code postal *</label>
+                <input type="text" id="shippingPostalCode" name="shippingPostalCode" required autocomplete="postal-code">
+              </div>
+            </div>
+            <div class="order-form-group">
+              <label for="shippingCountry">Pays *</label>
+              <select id="shippingCountry" name="shippingCountry" required autocomplete="country">
+                <option value="FR" selected>France</option>
+                <option value="BE">Belgique</option>
+                <option value="CH">Suisse</option>
+                <option value="CA">Canada</option>
+                <option value="LU">Luxembourg</option>
+                <option value="OTHER">Autre</option>
+              </select>
+            </div>
+          </fieldset>
+
+          <!-- Stripe Elements : 3 champs séparés (sécurisés, PCI SAQ A) -->
+          <div class="order-form-group">
+            <label>Numéro de carte *</label>
+            <div id="card-number-element" class="stripe-input"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+            <div class="order-form-group">
+              <label>Date d'expiration (MM/AA) *</label>
+              <div id="card-expiry-element" class="stripe-input"></div>
+            </div>
+            <div class="order-form-group">
+              <label>Cryptogramme (CVC) *</label>
+              <div id="card-cvc-element" class="stripe-input"></div>
+            </div>
+          </div>
+
+          <!-- Honeypot anti-bot (garde ton existant) -->
+          <input type="checkbox" id="hp_check" name="hp_check" tabindex="-1" autocomplete="off" style="display:none">
+
+          <div id="paymentMessage" class="payment-message" aria-live="polite"></div>
+
+          <button type="submit" id="payButton" class="order-btn order-btn-submit">Payer</button>
+        </form>
+      </div>
+    </div>
+
+    <footer>
+        <p><strong>Attention :</strong> Il s'agit d'un prototype non fonctionnel. Les produits présentés, leurs prix et leurs fournisseurs ne sont pas encore validés. Aucune donnée personnelle n'est collectée. Aucun paiement n'est possible.</p>
+        <p>Ce prototype utilise uniquement HTML, CSS et JavaScript natif, dans le respect du budget nul.</p>
+        <a href="contact.html" class="contact-footer-link" aria-label="Nous contacter">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            <span>Nous contacter</span>
+        </a>
+    </footer>
+
+    <script>
+        // Tableau de produits fictifs
+        const products = [
+            {
+                id: 1,
+                name: "Console RetroBox Pro",
+                category: "consoles-gaming",
+                description: "Console de jeu rétro avec émulateurs intégrés pour jouer aux classiques des années 80 et 90.",
+                price: 89.99,
+                image: "gameboy.png" // À placer dans assets/produits/
+            },
+            {
+                id: 2,
+                name: "Manette sans fil NéoClassic",
+                category: "consoles-gaming",
+                description: "Manette sans fil compatible avec plusieurs consoles rétro, batterie longue durée.",
+                price: 39.99,
+                image: "manette-neo-classic.jpg"
+            },
+            {
+                id: 3,
+                name: "Clavier mécanique ChromaShift",
+                category: "accessoires-info",
+                description: "Clavier mécanique gaming avec rétroéclairage RGB personnalisable et switches bleus.",
+                price: 129.99,
+                image: "clavier-chromashift.jpg"
+            },
+            {
+                id: 4,
+                name: "Tapis de souris Galaxie",
+                category: "accessoires-info",
+                description: "Tapis de souris grand format avec design nébuleuse et surface lisse pour une glisse précise.",
+                price: 24.99,
+                image: "tapis-souris-galaxie.jpg"
+            },
+            {
+                id: 5,
+                name: "Lampe LED Voxel",
+                category: "equipements-maison",
+                description: "Lampe d'ambiance en forme de pixel art, avec changement de couleurs et intensité réglable.",
+                price: 45.99,
+                image: "lampe-led-voxel.jpg"
+            },
+            {
+                id: 6,
+                name: "Coussin Cible Retro",
+                category: "equipements-maison",
+                description: "Coussin décoratif en forme de cible d'arcade vintage, doux et résistant.",
+                price: 29.99,
+                image: "coussin-cible-retro.jpg"
+            },
+            {
+                id: 7,
+                name: "Poster Nébuleuse Cyber",
+                category: "decoration-geek",
+                description: "Poster haute définition représentant une nébuleuse cyberpunk, imprimé sur papier premium.",
+                price: 19.99,
+                image: "poster-nebuleuse-cyber.jpg"
+            },
+            {
+                id: 8,
+                name: "Horloge Pixel Art",
+                category: "decoration-geek",
+                description: "Horloge murale avec affichage pixel art, fonctionne sur batterie ou USB.",
+                price: 34.99,
+                image: "horloge-pixel-art.jpg"
+            },
+            {
+                id: 9,
+                name: "Figurine Limited Edition: Hero X",
+                category: "figurines-collection",
+                description: "Figurine de collection en édition limitée, peint à la main, avec boîte numérotée.",
+                price: 149.99,
+                image: "figurine-hero-x.jpg"
+            },
+            {
+                id: 10,
+                name: "Réplique Arme Légendaire",
+                category: "figurines-collection",
+                description: "Réplique fidèle d'arme célèbre d'un jeu vidéo, en métal et bois, pour affichage uniquement.",
+                price: 199.99,
+                image: "replique-arme-legendaire.jpg"
+            },
+            {
+                id: 11,
+                name: "Mortier et Pilon Pixel",
+                category: "accessoires-quotidien",
+                description: "Set de cuisine geek : mortier et pilon en céramique avec motif pixel art 8-bit.",
+                price: 22.99,
+                image: "mortier-pilon-pixel.jpg"
+            },
+            {
+                id: 12,
+                name: "Gourde Isotherme Circuit",
+                category: "accessoires-quotidien",
+                description: "Gourde en acier inoxydable avec design de circuit imprimé, garde les boissons chaudes/froides pendant 12h.",
+                price: 27.99,
+                image: "gourde-isotherme-circuit.jpg"
+            }
+        ];
+
+        // État du panier
+        let cart = {
+            items: [], // tableau d'objets {productId, quantity}
+            count: 0   // nombre total d'articles
+        };
+
+
+const CART_STORAGE_KEY = 'mavyzo_market_cart';
+
+// Sauvegarder le panier dans le navigateur
+function saveCart() {
+    try {
+        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+    } catch (error) {
+        console.warn('Impossible de sauvegarder le panier.', error);
+    }
+}
+
+function loadCart() {
+    try {
+        const savedCart = localStorage.getItem(CART_STORAGE_KEY);
+
+        if (!savedCart) return;
+
+        const parsedCart = JSON.parse(savedCart);
+
+        if (!parsedCart || !Array.isArray(parsedCart.items)) return;
+
+        cart.items = parsedCart.items.filter(item =>
+            item &&
+            Number.isInteger(item.productId) &&
+            Number.isInteger(item.quantity) &&
+            item.quantity > 0 &&
+            products.some(product => product.id === item.productId)
+        );
+
+        cart.count = cart.items.reduce(
+            (total, item) => total + item.quantity,
+            0
+        );
+    } catch (error) {
+        console.warn('Impossible de restaurer le panier.', error);
+    }
+}
+
+
+        // Fonction pour créer une carte produit
+        function createProductCard(product) {
+            const card = document.createElement('article');
+            card.className = 'product-card';
+            card.dataset.category = product.category;
+            card.dataset.name = product.name.toLowerCase();
+
+            card.innerHTML = `
+                <div class="product-image">
+                    <!-- Emplacement pour l'image du produit -->
+                    <div class="image-placeholder">
+                        <img src="assets/produits/${product.image}" alt="${product.name}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
+                        <div class="placeholder-fallback" style="display:none;">
+                            <p>[ Image du produit ]</p>
+                            <p>${product.name}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="product-info">
+                    <h3>${product.name}</h3>
+                    <p class="product-description">${product.description}</p>
+                    <p class="price">${product.price.toFixed(2)} €</p>
+                    <button class="btn-add-to-cart" data-id="${product.id}">
+                        Ajouter au panier
+                    </button>
+                </div>
+            `;
+            return card;
+        }
+
+        // Fonction pour afficher les produits selon le filtre de recherche et de catégorie
+        function displayProducts() {
+            const container = document.getElementById('productsContainer');
+            container.innerHTML = ''; // Effacer le contenu actuel
+
+            // Récupérer les valeurs de recherche et de catégorie (desktop et mobile)
+            const searchTermDesktop = document.getElementById('searchInput')?.value.toLowerCase() || '';
+            const searchTermMobile = document.getElementById('searchInputMobile')?.value.toLowerCase() || '';
+            const searchTerm = searchTermDesktop || searchTermMobile;
+
+            const selectedCategoryDesktop = document.getElementById('categoryFilter')?.value || 'all';
+            const selectedCategoryMobile = document.getElementById('categoryFilterMobile')?.value || 'all';
+            const selectedCategory = selectedCategoryDesktop !== 'all' ? selectedCategoryDesktop : selectedCategoryMobile;
+
+            const filteredProducts = products.filter(product => {
+                const matchesSearch = product.name.toLowerCase().includes(searchTerm) ||
+                                     product.description.toLowerCase().includes(searchTerm);
+                const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
+                return matchesSearch && matchesCategory;
+            });
+
+            if (filteredProducts.length === 0) {
+                container.innerHTML = '<p class="no-results">Aucun produit trouvé correspondant à vos critères.</p>';
+                return;
+            }
+
+            // Créer une grille pour les produits
+            const grid = document.createElement('div');
+            grid.className = 'product-grid';
+
+            filteredProducts.forEach(product => {
+                const card = createProductCard(product);
+                grid.appendChild(card);
+            });
+
+            container.appendChild(grid);
+
+            // Réactiver les écouteurs des boutons "Ajouter au panier"
+            document.querySelectorAll('.btn-add-to-cart').forEach(button => {
+                button.addEventListener('click', addToCart);
+            });
+        }
+
+        // Fonction pour ajouter un produit au panier
+        function addToCart(event) {
+            const productId = parseInt(event.target.dataset.id);
+            const product = products.find(p => p.id === productId);
+            if (!product) return;
+
+            // Vérifier si le produit est déjà dans le panier
+            const existingItem = cart.items.find(item => item.productId === productId);
+            if (existingItem) {
+                existingItem.quantity += 1;
+            } else {
+                cart.items.push({ productId, quantity: 1 });
+            }
+            cart.count += 1;
+            saveCart();
+
+            // Mettre à jour l'affichage du compteur du panier
+            updateCartCount();
+
+            // Animer le compteur du panier
+            animateCartCount();
+        }
+
+        // Fonction pour mettre à jour l'affichage du compteur du panier
+
+function updateCartCount() {
+    // Calculer le nombre réel d'articles
+    cart.count = cart.items.reduce(
+        (total, item) => total + item.quantity,
+        0
+    );
+
+    const cartCountElement = document.querySelector('.cart-count');
+
+    if (cartCountElement) {
+        cartCountElement.textContent = cart.count;
+    }
+}
+
+        // Fonction pour animer le compteur du panier
+        function animateCartCount() {
+            const cartCountElement = document.querySelector('.cart-count');
+            if (!cartCountElement) return;
+
+            // Respecter la préférence de réduction des mouvements
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                return;
+            }
+
+            // Relancer l'animation du compteur
+            cartCountElement.classList.remove('animate-pulse');
+            void cartCountElement.offsetWidth;
+            cartCountElement.classList.add('animate-pulse');
+
+            setTimeout(() => {
+                cartCountElement.classList.remove('animate-pulse');
+            }, 500);
+        }
+
+
+        // Fonction pour afficher/masquer le menu mobile
+        function toggleMobileMenu() {
+            const mobileMenu = document.getElementById('mobileMenu');
+            const body = document.body;
+            mobileMenu.classList.toggle('open');
+            body.classList.toggle('mobile-menu-open');
+        }
+
+        // Fonction pour fermer le menu mobile
+        function closeMobileMenu() {
+            const mobileMenu = document.getElementById('mobileMenu');
+            const body = document.body;
+            mobileMenu.classList.remove('open');
+            body.classList.remove('mobile-menu-open');
+        }
+
+        // Écouteurs d'événements
+        document.getElementById('mobileMenuBtn').addEventListener('click', toggleMobileMenu);
+        document.getElementById('closeMenuBtn').addEventListener('click', closeMobileMenu);
+        // Fermer le menu mobile en cliquant en dehors
+        document.getElementById('mobileMenu').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeMobileMenu();
+            }
+        });
+
+        // Recherche (desktop)
+        document.getElementById('searchButton').addEventListener('click', displayProducts);
+        document.getElementById('searchInput').addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                displayProducts();
+            }
+        });
+        // Recherche (mobile)
+        document.getElementById('searchButtonMobile').addEventListener('click', displayProducts);
+        document.getElementById('searchInputMobile').addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                displayProducts();
+            }
+        });
+        // Filtre par catégorie (desktop)
+        document.getElementById('categoryFilter').addEventListener('change', displayProducts);
+        // Filtre par catégorie (mobile)
+        document.getElementById('categoryFilterMobile').addEventListener('change', displayProducts);
+
+
+        // Animations d'apparition du banner (titre et paragraphe)
+        (() => {
+            const bannerTitle = document.querySelector('.banner-content h1');
+            const bannerText = document.querySelector('.banner-content p');
+            const bannerTop = document.querySelector('.banner-top');
+
+            // Si un élément manque, on ne bloque pas l'affichage
+            if (!bannerTitle || !bannerText || !bannerTop) {
+                return;
+            }
+
+            // Respecter le réglage de réduction des mouvements
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                bannerTop.style.opacity = '1';
+                bannerTitle.style.opacity = '1';
+                bannerText.style.opacity = '1';
+                bannerTop.style.transform = 'none';
+                bannerTitle.style.transform = 'none';
+                bannerText.style.transform = 'none';
+                return;
+            }
+
+            // Préparer l'apparition progressive
+            bannerTop.style.opacity = '0';
+            bannerTop.style.transform = 'translateY(-20px)';
+            bannerTitle.style.opacity = '0';
+            bannerTitle.style.transform = 'translateY(-20px)';
+            bannerText.style.opacity = '0';
+            bannerText.style.transform = 'translateY(20px)';
+
+            setTimeout(() => {
+                bannerTop.style.transition = 'opacity 0.8s ease, transform 0.8s ease';
+                bannerTop.style.opacity = '1';
+                bannerTop.style.transform = 'translateY(0)';
+            }, 200);
+
+            setTimeout(() => {
+                bannerTitle.style.transition = 'opacity 0.8s ease, transform 0.8s ease';
+                bannerTitle.style.opacity = '1';
+                bannerTitle.style.transform = 'translateY(0)';
+            }, 400);
+
+            setTimeout(() => {
+                bannerText.style.transition = 'opacity 0.8s ease, transform 0.8s ease';
+                bannerText.style.opacity = '1';
+                bannerText.style.transform = 'translateY(0)';
+            }, 600);
+        })();
+
+        // === FONCTIONNEMENT DU PANNEAU DU PANIER ===
+
+        const cartPanel = document.getElementById('cartPanel');
+        const cartIcon = document.getElementById('cartIcon');
+        const closeCartButton = document.getElementById('closeCart');
+        const cartItemsContainer = document.getElementById('cartItems');
+        const cartTotalElement = document.getElementById('cartTotal');
+        const clearCartButton = document.getElementById('clearCart');
+        const checkoutButton = document.getElementById('checkoutButton');
+
+        // Ouvrir le panier
+        function openCart() {
+            cartPanel.classList.add('is-open');
+            cartPanel.setAttribute('aria-hidden', 'false');
+            renderCart();
+        }
+
+        // Fermer le panier
+        function closeCart() {
+            cartPanel.classList.remove('is-open');
+            cartPanel.setAttribute('aria-hidden', 'true');
+        }
+
+        // Afficher les articles et calculer le total
+
+function renderCart() {
+    cartItemsContainer.innerHTML = '';
+
+    if (cart.items.length === 0) {
+        cartItemsContainer.innerHTML =
+            '<p class="cart-empty">Ton panier est vide.</p>';
+
+        cartTotalElement.textContent = '0,00 €';
+        updateCartCount();
+        return;
+    }
+
+    let total = 0;
+
+    cart.items.forEach(item => {
+        const product = products.find(
+            product => product.id === item.productId
+        );
+
+        if (!product) return;
+
+        const subtotal = product.price * item.quantity;
+        total += subtotal;
+
+        const itemElement = document.createElement('div');
+        itemElement.className = 'cart-item';
+
+        const info = document.createElement('div');
+        info.className = 'cart-item-info';
+
+        const name = document.createElement('h3');
+        name.textContent = product.name;
+
+        const price = document.createElement('p');
+        price.textContent =
+            `${product.price.toFixed(2).replace('.', ',')} € / unité`;
+
+        const quantityControls = document.createElement('div');
+        quantityControls.className = 'cart-quantity-controls';
+
+        const decreaseButton = document.createElement('button');
+        decreaseButton.type = 'button';
+        decreaseButton.textContent = '−';
+        decreaseButton.setAttribute(
+            'aria-label',
+            `Diminuer la quantité de ${product.name}`
+        );
+        decreaseButton.disabled = item.quantity <= 1;
+
+        const quantityDisplay = document.createElement('span');
+        quantityDisplay.textContent = item.quantity;
+        quantityDisplay.setAttribute('aria-label', 'Quantité');
+
+        const increaseButton = document.createElement('button');
+        increaseButton.type = 'button';
+        increaseButton.textContent = '+';
+        increaseButton.setAttribute(
+            'aria-label',
+            `Augmenter la quantité de ${product.name}`
+        );
+
+        const subtotalElement = document.createElement('p');
+        subtotalElement.textContent =
+            `Sous-total : ${subtotal.toFixed(2).replace('.', ',')} €`;
+
+        decreaseButton.addEventListener('click', () => {
+            if (item.quantity <= 1) return;
+
+            item.quantity -= 1;
+            saveCart();
+            updateCartCount();
+            renderCart();
+        });
+
+        increaseButton.addEventListener('click', () => {
+            item.quantity += 1;
+            saveCart();
+            updateCartCount();
+            renderCart();
+        });
+
+        quantityControls.append(
+            decreaseButton,
+            quantityDisplay,
+            increaseButton
+        );
+
+        info.append(
+            name,
+            price,
+            quantityControls,
+            subtotalElement
+        );
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.textContent = 'Retirer';
+        removeButton.setAttribute(
+            'aria-label',
+            `Retirer ${product.name} du panier`
+        );
+
+        removeButton.addEventListener('click', () => {
+            cart.items = cart.items.filter(
+                cartItem => cartItem.productId !== item.productId
+            );
+
+            saveCart();
+            updateCartCount();
+            renderCart();
+        });
+
+        itemElement.append(info, removeButton);
+        cartItemsContainer.appendChild(itemElement);
+    });
+
+    cartTotalElement.textContent =
+        `${total.toFixed(2).replace('.', ',')} €`;
+
+    updateCartCount();
+}
+
+        // Relier les boutons du panier
+        if (cartIcon) {
+            cartIcon.addEventListener('click', openCart);
+        }
+
+        if (closeCartButton) {
+            closeCartButton.addEventListener('click', closeCart);
+        }
+
+        if (cartPanel) {
+            cartPanel.addEventListener('click', event => {
+                if (event.target === cartPanel) {
+                    closeCart();
+                }
+            });
+        }
+
+        // Vider entièrement le panier
+        if (clearCartButton) {
+            clearCartButton.addEventListener('click', () => {
+                cart.items = [];
+                cart.count = 0;
+                saveCart();
+                updateCartCount();
+                renderCart();
+            });
+        }
+
+        // Le prototype ne possède pas encore de paiement réel
+        // Rediriger vers la page de récapitulatif de commande
+        // Bouton "Voir le récapitulatif" - ouvre la page commande sans valider
+        const viewOrderButton = document.getElementById('viewOrderButton');
+        if (viewOrderButton) {
+            viewOrderButton.addEventListener('click', () => {
+                if (cart.items.length === 0) {
+                    alert('Votre panier est vide.');
+                    return;
+                }
+                window.location.href = 'commande.html/commande.html';
+            });
+        }
+
+        // Fermer le panier avec la touche Échap
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && cartPanel.classList.contains('is-open')) {
+                closeCart();
+            }
+        });
+
+        // Écouteur pour le bouton « Continuer » (après définition de openOrderForm)
+        if (checkoutButton) {
+            checkoutButton.addEventListener('click', () => {
+                if (cart.items.length === 0) {
+                    alert('Votre panier est vide.');
+                    return;
+                }
+                openOrderForm();
+            });
+        }
+
+        // Initialisation : exécuter après la déclaration des éléments du panier
+        loadCart();
+        displayProducts();
+        updateCartCount();
+        renderCart();
+
+        // === FORMULAIRE DE COMMANDE (MODAL) ===
+
+        // --- CONFIG STRIPE & WORKER ---
+        const STRIPE_PUBLISHABLE_KEY = pk_test_51UWoDNFPOGhU6Lk4Qzpwc5cnJ0TuUzEnEDeHh3enohPHBABsEeEdYrcNFwzEg5dTqbUTKcHr8DCPSHfT0xccqSyT00GLnjzeNU; // Stripe Dashboard → API keys → Publishable key (pk_test_...)
+        const WORKER_URL = mazyvo-backend.mavizocontact.workers.dev; // Ton URL Cloudflare Worker (ex: mavizo-market.xxx.workers.dev)
+        // -----------------------------------
+
+        // Variables Stripe globales (3 Elements séparés)
+        let stripe = null;
+        let elements = null;
+        let cardNumberElement = null;
+        let cardExpiryElement = null;
+        let cardCvcElement = null;
+
+        // Init Stripe au chargement
+        function initStripe() {
+            if (typeof Stripe !== 'undefined' && STRIPE_PUBLISHABLE_KEY) {
+                stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+                elements = stripe.elements({
+                    appearance: {
+                        theme: 'stripe',
+                        variables: {
+                            colorPrimary: '#00b4ff',
+                            colorBackground: '#0a0a0a',
+                            colorText: '#fff',
+                            colorDanger: '#ff3131',
+                            fontFamily: 'inherit',
+                            spacingUnit: '4px',
+                            borderRadius: '6px'
+                        },
+                        rules: {
+                            '.Input': { border: '1px solid #333', boxShadow: 'none', background: '#0a0a0a' },
+                            '.Input:focus': { border: '1px solid #00b4ff', boxShadow: '0 0 0 2px rgba(0, 180, 255, 0.2)' },
+                            '.Input--invalid': { border: '1px solid #ff3131' },
+                            '.Label': { color: '#ccc', fontSize: '13px', fontWeight: '500' },
+                            '.ErrorMessage': { color: '#ff6b6b', fontSize: '12px' }
+                        }
+                    }
+                });
+                cardNumberElement = elements.create('cardNumber', {
+                    style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
+                });
+                cardExpiryElement = elements.create('cardExpiry', {
+                    style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
+                });
+                cardCvcElement = elements.create('cardCvc', {
+                    style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
+                });
+            }
+        }
+
+        // Ouvre modal + monte les 3 Stripe Elements
+        function openOrderForm() {
+            closeCart();
+            const modal = document.getElementById('orderModal');
+            const form = document.getElementById('orderForm');
+            const payBtn = document.getElementById('payButton');
+            const msgBox = document.getElementById('paymentMessage');
+
+            if (!modal || !form) return;
+
+            // Reset UI
+            form.reset();
+            msgBox.textContent = '';
+            msgBox.className = 'payment-message';
+            payBtn.disabled = false;
+            payBtn.textContent = 'Payer';
+
+            // Monte les 3 Elements séparés
+            if (cardNumberElement) {
+                const container = document.getElementById('card-number-element');
+                if (container) {
+                    container.innerHTML = '';
+                    cardNumberElement.mount('#card-number-element');
+                    cardNumberElement.on('change', (event) => {
+                        if (event.error) { msgBox.textContent = event.error.message; msgBox.className = 'payment-message error'; }
+                        else if (!msgBox.textContent.includes('CVC') && !msgBox.textContent.includes('expiration')) { msgBox.textContent = ''; msgBox.className = 'payment-message'; }
+                    });
+                    cardNumberElement.on('focus', () => container.classList.add('StripeElement--focus'));
+                    cardNumberElement.on('blur', () => container.classList.remove('StripeElement--focus'));
+                }
+            }
+            if (cardExpiryElement) {
+                const container = document.getElementById('card-expiry-element');
+                if (container) {
+                    container.innerHTML = '';
+                    cardExpiryElement.mount('#card-expiry-element');
+                    cardExpiryElement.on('change', (event) => {
+                        if (event.error) { msgBox.textContent = event.error.message; msgBox.className = 'payment-message error'; }
+                    });
+                    cardExpiryElement.on('focus', () => container.classList.add('StripeElement--focus'));
+                    cardExpiryElement.on('blur', () => container.classList.remove('StripeElement--focus'));
+                }
+            }
+            if (cardCvcElement) {
+                const container = document.getElementById('card-cvc-element');
+                if (container) {
+                    container.innerHTML = '';
+                    cardCvcElement.mount('#card-cvc-element');
+                    cardCvcElement.on('change', (event) => {
+                        if (event.error) { msgBox.textContent = event.error.message; msgBox.className = 'payment-message error'; }
+                    });
+                    cardCvcElement.on('focus', () => container.classList.add('StripeElement--focus'));
+                    cardCvcElement.on('blur', () => container.classList.remove('StripeElement--focus'));
+                }
+            }
+
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+            setTimeout(() => document.getElementById('customerName')?.focus(), 100);
+        }
+
+        // Fermer le modal de commande
+        function closeOrderForm() {
+            const modal = document.getElementById('orderModal');
+            if (!modal) return;
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.style.overflow = '';
+            // Rouvrir le panier si des articles existent
+            if (cart.items.length > 0) {
+                openCart();
+            }
+        }
+
+        // Soumission + paiement
+        async function handleOrderSubmit(e) {
+            e.preventDefault();
+
+            const form = e.target;
+            const payBtn = document.getElementById('payButton');
+            const msgBox = document.getElementById('paymentMessage');
+            const name = form.customerName.value.trim();
+            const email = form.customerEmail.value.trim();
+            const phone = form.customerPhone.value.trim();
+            const shippingAddress = form.shippingAddress.value.trim();
+            const shippingAddress2 = form.shippingAddress2.value.trim();
+            const shippingCity = form.shippingCity.value.trim();
+            const shippingPostalCode = form.shippingPostalCode.value.trim();
+            const shippingCountry = form.shippingCountry.value.trim();
+
+            if (!name || !email) { msgBox.textContent = 'Nom et email requis'; msgBox.className = 'payment-message error'; return; }
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { msgBox.textContent = 'Email invalide'; msgBox.className = 'payment-message error'; return; }
+            if (!phone) { msgBox.textContent = 'Téléphone requis'; msgBox.className = 'payment-message error'; return; }
+            if (!shippingAddress || !shippingCity || !shippingPostalCode || !shippingCountry) { msgBox.textContent = 'Adresse de livraison incomplète'; msgBox.className = 'payment-message error'; return; }
+
+            const cartItems = JSON.parse(localStorage.getItem('mavyzo_market_cart') || '{"items":[]}').items || [];
+            if (cartItems.length === 0) { msgBox.textContent = 'Panier vide'; msgBox.className = 'payment-message error'; return; }
+
+            const totalCents = Math.round(cartItems.reduce((sum, i) => {
+                const product = products.find(p => p.id === i.productId);
+                return sum + (product ? product.price * i.quantity : 0);
+            }, 0) * 100);
+
+            payBtn.disabled = true;
+            payBtn.textContent = 'Création paiement…';
+            msgBox.textContent = '';
+            msgBox.className = 'payment-message';
+
+            const customerData = { name, email, phone };
+            const addressData = { shippingAddress, shippingAddress2, shippingCity, shippingPostalCode, shippingCountry };
+
+            try {
+                // Prépare les items pour le Worker
+                const workerItems = cartItems.map(i => {
+                    const product = products.find(p => p.id === i.productId);
+                    return {
+                        id: i.productId,
+                        name: product?.name,
+                        price: product?.price,
+                        qty: i.quantity,
+                        supplier_id: product?.supplier_id || null
+                    };
+                }).filter(Boolean);
+
+                const resp = await fetch(`${WORKER_URL}/api/create-payment-intent`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        items: workerItems,
+                        customer: customerData,
+                        shipping: addressData
+                    })
+                });
+
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || 'Erreur création paiement');
+
+                payBtn.textContent = 'Paiement en cours…';
+
+                const { error, paymentIntent } = await stripe.confirmCardPayment(
+                    data.clientSecret,
+                    { payment_method: {
+                        card: cardNumberElement,
+                        billing_details: {
+                            name,
+                            email,
+                            phone,
+                            address: {
+                                line1: shippingAddress,
+                                line2: shippingAddress2 || undefined,
+                                city: shippingCity,
+                                postal_code: shippingPostalCode,
+                                country: shippingCountry === 'OTHER' ? 'FR' : shippingCountry
+                            }
+                        }
+                    } }
+                );
+
+                if (error) {
+                    msgBox.textContent = error.message;
+                    msgBox.className = 'payment-message error';
+                    payBtn.disabled = false;
+                    payBtn.textContent = 'Réessayer';
+                    return;
+                }
+
+                // Succès — Webhook fera Sheets + Emails
+                payBtn.textContent = 'Paiement réussi ✓';
+                msgBox.textContent = 'Paiement validé !';
+                msgBox.className = 'payment-message success';
+
+                localStorage.removeItem('mavyzo_market_cart');
+                cart.items = [];
+                cart.count = 0;
+                saveCart();
+                updateCartCount();
+                renderCart();
+                closeOrderForm();
+                showToast(`Commande confirmée ! Réf: PI-${paymentIntent.id.slice(-8).toUpperCase()}`);
+
+            } catch (err) {
+                console.error('Payment error:', err);
+                msgBox.textContent = err.message || 'Erreur inattendue';
+                msgBox.className = 'payment-message error';
+                payBtn.disabled = false;
+                payBtn.textContent = 'Réessayer';
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.classList.add('show'), 10);
+            setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
+        }
+
+        // Écouteurs pour le modal de commande
+        document.getElementById('orderModal')?.addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeOrderForm();
+        });
+        document.getElementById('orderModal')?.querySelector('.order-modal-close')?.addEventListener('click', closeOrderForm);
+        // Note: le formulaire utilise onsubmit="handleOrderSubmit(event)" dans le HTML
+
+        // Fermer le modal avec Échap
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('orderModal');
+                if (modal && modal.classList.contains('is-open')) {
+                    closeOrderForm();
+                }
+            }
+        });
+
+        // Initialiser Stripe au chargement
+        initStripe();
+
+        // === HELPERS DÉMO (console navigateur F12) ===
+        // Tapez dans la console : afficherCommandesDemo()
+        window.afficherCommandesDemo = function() {
+            const orders = JSON.parse(localStorage.getItem('mavyzo_demo_orders') || '[]');
+            if (orders.length === 0) {
+                console.log('📭 Aucune commande démo');
+                return;
+            }
+            console.table(orders.map(o => ({
+                Référence: o.reference,
+                Date: new Date(o.date).toLocaleString('fr-FR'),
+                Client: o.nom,
+                Email: o.email,
+                Montant: o.montant.toFixed(2) + ' €',
+                Produits: o.produits.split('\n').join(' | ')
+            })));
+        };
+        // Tapez dans la console : effacerCommandesDemo()
+        window.effacerCommandesDemo = function() {
+            localStorage.removeItem('mavyzo_demo_orders');
+            console.log('🗑️ Commandes démo effacées');
+        };
+
+    </script>
+</body>
+</html>
+
+
+
