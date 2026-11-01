@@ -1,0 +1,282 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Récapitulatif de commande - MAVYZO MARKET</title>
+    <link rel="stylesheet" href="../style.css">
+
+    <style>
+        .order-page {
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 25px;
+            color: #ffffff;
+        }
+
+        .order-header {
+            text-align: center;
+            margin-bottom: 35px;
+        }
+
+        .order-header h1 {
+            color: #00e5ff;
+            margin-bottom: 12px;
+        }
+
+        .order-notice {
+            padding: 15px;
+            border: 1px solid #c084fc;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            line-height: 1.6;
+        }
+
+        .order-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 25px 0;
+        }
+
+        .order-table th,
+        .order-table td {
+            padding: 14px 10px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.15);
+        }
+
+        .order-table th {
+            color: #00e5ff;
+        }
+
+        .order-total {
+            text-align: right;
+            font-size: 1.4rem;
+            margin: 25px 0;
+        }
+
+        .order-total strong {
+            color: #00e5ff;
+        }
+
+        .order-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        .order-actions a,
+        .order-actions button {
+            flex: 1;
+            min-width: 180px;
+            padding: 14px;
+            border: 1px solid #00e5ff;
+            border-radius: 10px;
+            background: transparent;
+            color: #00e5ff;
+            text-align: center;
+            text-decoration: none;
+            font: inherit;
+            cursor: pointer;
+        }
+
+        .order-actions .primary {
+            background: #00e5ff;
+            color: #050505;
+            font-weight: bold;
+        }
+
+        .order-empty {
+            text-align: center;
+            padding: 25px;
+        }
+
+        @media (max-width: 600px) {
+            .order-page {
+                margin: 20px auto;
+                padding: 15px;
+            }
+
+            .order-table th,
+            .order-table td {
+                padding: 10px 5px;
+                font-size: 0.9rem;
+            }
+
+            .order-total {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="order-page">
+        <header class="order-header">
+            <h1>MAVYZO MARKET</h1>
+            <p>Récapitulatif de votre commande</p>
+        </header>
+
+        <div class="order-notice">
+            <strong>Prototype de démonstration</strong><br>
+            Cette page permet de consulter votre panier avant
+            une éventuelle commande. Aucun paiement réel
+            n'est effectué et aucune commande n'est transmise.
+        </div>
+
+        <section id="orderContent" aria-live="polite">
+            <p>Chargement du récapitulatif...</p>
+        </section>
+
+        <div class="order-actions">
+            <a href="../MAVYZO_MARKET.html">← Retour à la boutique</a>
+            <button type="button" class="primary" id="backToCart">
+                Modifier mon panier
+            </button>
+            <a href="../contact.html" class="contact-link">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                    <polyline points="22,6 12,13 2,6"/>
+                </svg>
+                <span>Nous contacter</span>
+            </a>
+        </div>
+    </main>
+
+    <script>
+        const STORAGE_KEY = 'mavyzo_market_cart';
+
+        const productCatalog = [
+            { id: 1, name: "Console RetroBox Pro", price: 89.99 },
+            { id: 2, name: "Manette sans fil NéoClassic", price: 39.99 },
+            { id: 3, name: "Clavier mécanique ChromaShift", price: 129.99 },
+            { id: 4, name: "Tapis de souris Galaxie", price: 24.99 },
+            { id: 5, name: "Lampe LED Voxel", price: 45.99 },
+            { id: 6, name: "Coussin Cible Retro", price: 29.99 },
+            { id: 7, name: "Poster Nébuleuse Cyber", price: 19.99 },
+            { id: 8, name: "Horloge Pixel Art", price: 34.99 },
+            { id: 9, name: "Figurine Limited Edition: Hero X", price: 149.99 },
+            { id: 10, name: "Réplique Arme Légendaire", price: 199.99 },
+            { id: 11, name: "Mortier et Pilon Pixel", price: 22.99 },
+            { id: 12, name: "Gourde Isotherme Circuit", price: 27.99 }
+        ];
+
+        const content = document.getElementById('orderContent');
+
+        function formatPrice(amount) {
+            return amount.toLocaleString('fr-FR', {
+                style: 'currency',
+                currency: 'EUR'
+            });
+        }
+
+        function displayOrder() {
+            let savedCart;
+
+            try {
+                savedCart = JSON.parse(
+                    localStorage.getItem(STORAGE_KEY) || '{"items":[]}'
+                );
+            } catch (error) {
+                content.textContent =
+                    "Impossible de lire le panier enregistré.";
+                return;
+            }
+
+            const items = Array.isArray(savedCart.items)
+                ? savedCart.items
+                : [];
+
+            const validItems = items.filter(item =>
+                item &&
+                Number.isInteger(item.productId) &&
+                Number.isInteger(item.quantity) &&
+                item.quantity > 0 &&
+                productCatalog.some(p => p.id === item.productId)
+            );
+
+            if (validItems.length === 0) {
+                content.innerHTML = `
+                    <div class="order-empty">
+                        <h2>Votre panier est vide</h2>
+                        <p>Ajoutez des produits à la boutique
+                        pour afficher votre récapitulatif.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'order-table';
+
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Produit</th>
+                        <th>Prix unitaire</th>
+                        <th>Quantité</th>
+                        <th>Sous-total</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            `;
+
+            const tbody = table.querySelector('tbody');
+            let total = 0;
+            let totalQuantity = 0;
+
+            validItems.forEach(item => {
+                const product = productCatalog.find(
+                    p => p.id === item.productId
+                );
+
+                const subtotal = product.price * item.quantity;
+                total += subtotal;
+                totalQuantity += item.quantity;
+
+                const row = document.createElement('tr');
+
+                [
+                    product.name,
+                    formatPrice(product.price),
+                    String(item.quantity),
+                    formatPrice(subtotal)
+                ].forEach(value => {
+                    const cell = document.createElement('td');
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                });
+
+                tbody.appendChild(row);
+            });
+
+            content.replaceChildren();
+
+            const summary = document.createElement('p');
+            summary.textContent =
+                `Nombre total d'articles : ${totalQuantity}`;
+
+            const totalElement = document.createElement('p');
+            totalElement.className = 'order-total';
+            totalElement.append('Total : ');
+
+            const totalValue = document.createElement('strong');
+            totalValue.textContent = formatPrice(total);
+            totalElement.appendChild(totalValue);
+
+            content.append(summary, table, totalElement);
+        }
+
+        document.getElementById('backToCart').addEventListener(
+            'click',
+            () => {
+                window.location.href = '../MAVYZO_MARKET.html';
+            }
+        );
+
+        displayOrder();
+    </script>
+</body>
+</html>
