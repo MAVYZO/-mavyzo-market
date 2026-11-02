@@ -1049,6 +1049,11 @@ function renderCart() {
             payBtn.disabled = false;
             payBtn.textContent = 'Payer';
 
+            // Démonte proprement avant de remonter
+            if (cardNumberElement) cardNumberElement.unmount();
+            if (cardExpiryElement) cardExpiryElement.unmount();
+            if (cardCvcElement) cardCvcElement.unmount();
+
             // Monte les 3 Elements séparés
             if (cardNumberElement) {
                 const container = document.getElementById('card-number-element');
@@ -1098,6 +1103,12 @@ function renderCart() {
         function closeOrderForm() {
             const modal = document.getElementById('orderModal');
             if (!modal) return;
+
+            // Démonte les Elements Stripe
+            if (cardNumberElement) cardNumberElement.unmount();
+            if (cardExpiryElement) cardExpiryElement.unmount();
+            if (cardCvcElement) cardCvcElement.unmount();
+
             modal.classList.remove('is-open');
             modal.setAttribute('aria-hidden', 'true');
             document.body.style.overflow = '';
@@ -1114,6 +1125,16 @@ function renderCart() {
             const form = e.target;
             const payBtn = document.getElementById('payButton');
             const msgBox = document.getElementById('paymentMessage');
+
+            // Vérifie que Stripe est initialisé
+            if (!stripe) {
+                msgBox.textContent = 'Stripe pas prêt, réessayez dans 1s';
+                msgBox.className = 'payment-message error';
+                payBtn.disabled = false;
+                payBtn.textContent = 'Réessayer';
+                return;
+            }
+
             const name = form.customerName.value.trim();
             const email = form.customerEmail.value.trim();
             const phone = form.customerPhone.value.trim();
