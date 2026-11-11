@@ -1491,3 +1491,114 @@ footer .contact-footer-link:hover {
 .toast.show { opacity: 1; transform: translateY(0); }
 
 
+/* =====================================================
+   PAGE D'ACCUEIL MAVYZO MARKET
+   ===================================================== */
+
+body.landing-active {
+    overflow: hidden;
+}
+
+.home-landing {
+    position: fixed;
+    inset: 0;
+    z-index: 200000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 30px 20px;
+    background:
+        linear-gradient(
+            90deg,
+            rgba(5, 8, 20, 0.35),
+            rgba(5, 8, 20, 0.25),
+            rgba(5, 8, 20, 0.35)
+        ),
+        url("assets/produits/accueil-mavyzo.jpg") center center / cover no-repeat;
+    text-align: center;
+}
+
+.home-landing-content {
+    width: 100%;
+    max-width: 850px;
+    padding: 35px 25px;
+    border-radius: 18px;
+    background: rgba(5, 8, 20, 0.48);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.home-landing-content h1 {
+    margin-bottom: 22px;
+    font-size: clamp(2.5rem, 7vw, 5rem);
+    font-weight: 900;
+    letter-spacing: 4px;
+    color: #ffffff;
+    text-shadow: 0 0 18px #00bfff, 0 0 35px #8a2be2;
+}
+
+.home-landing-content h2 {
+    margin-bottom: 18px;
+    font-size: clamp(1.3rem, 3vw, 2.2rem);
+    color: #00eaff;
+    text-shadow: 0 0 14px rgba(0, 234, 255, 0.7);
+}
+
+.home-landing-content p {
+    margin-bottom: 32px;
+    font-size: clamp(1rem, 2vw, 1.2rem);
+    line-height: 1.6;
+    color: #ffffff;
+}
+
+.home-landing-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 17px 30px;
+    border: 2px solid #00eaff;
+    border-radius: 8px;
+    background: linear-gradient(110deg, #0077ff, #7928ca);
+    color: #ffffff;
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    cursor: pointer;
+    box-shadow: 0 0 18px rgba(0, 234, 255, 0.45);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.home-landing-button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 0 28px rgba(0, 234, 255, 0.8);
+}
+
+.home-landing-button:focus-visible {
+    outline: 3px solid #ffffff;
+    outline-offset: 5px;
+}
+
+@media (max-width: 600px) {
+    .home-landing {
+        padding: 15px;
+        background-position: center center;
+    }
+
+    .home-landing-content {
+        padding: 25px 15px;
+        background: rgba(5, 8, 20, 0.62);
+    }
+
+    .home-landing-content h1 {
+        letter-spacing: 2px;
+    }
+
+    .home-landing-button {
+        width: 100%;
+        padding: 15px 12px;
+        font-size: 0.9rem;
+    }
+}
+

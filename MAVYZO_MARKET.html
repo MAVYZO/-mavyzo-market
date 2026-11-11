@@ -200,7 +200,21 @@
         }
     </style>
 </head>
-<body>
+<body class="landing-active">
+
+<!-- PAGE D'ACCUEIL MAVYZO MARKET -->
+<section id="homeLanding" class="home-landing" aria-label="Accueil MAVYZO MARKET">
+    <div class="home-landing-content">
+        <h1>MAVYZO MARKET</h1>
+        <h2>Les bonnes trouvailles commencent ici !</h2>
+        <p>Découvrez un univers de produits tech, gaming, accessoires et idées du quotidien.</p>
+        <button type="button" id="enterStoreBtn" class="home-landing-button">
+            ENTRER DANS LA BOUTIQUE <span aria-hidden="true">→</span>
+        </button>
+    </div>
+</section>
+<!-- FIN PAGE D'ACCUEIL -->
+
     <!-- Bandeau d'accueil immersif -->
     <section class="banner">
         <div class="banner-content">
@@ -988,6 +1002,49 @@ function renderCart() {
         const WORKER_URL = 'https://mazyvo-backend.mavizocontact.workers.dev'; // Ton URL Cloudflare Worker
         // -----------------------------------
 
+        // Génère un client_reference_id (UUID v4) pour l'idempotence
+        // L'identifiant est lié au contenu du panier (hash) pour éviter les réutilisations incorrectes.
+        // Stocké en sessionStorage avec préfixe basé sur le hash du panier.
+        function computeCartHash() {
+            const cartItems = JSON.parse(localStorage.getItem('mavyzo_market_cart') || '{"items":[]}').items || [];
+            // Trier par productId pour hash déterministe
+            const sorted = [...cartItems].sort((a, b) => a.productId - b.productId);
+            const cartString = sorted.map(i => `${i.productId}:${i.quantity}`).join('|');
+            // Hash simple et rapide (non cryptographique, suffisant pour déduplication)
+            let hash = 0;
+            for (let i = 0; i < cartString.length; i++) {
+                hash = ((hash << 5) - hash) + cartString.charCodeAt(i);
+                hash |= 0; // Convert to 32bit integer
+            }
+            return Math.abs(hash).toString(36);
+        }
+
+        function getClientReferenceIdForCurrentCart() {
+            const cartHash = computeCartHash();
+            const storageKey = 'mavyzo_client_ref_' + cartHash;
+            let clientRefId = sessionStorage.getItem(storageKey);
+            if (!clientRefId) {
+                clientRefId = 'mavyzo_' + crypto.randomUUID().replace(/-/g, '');
+                sessionStorage.setItem(storageKey, clientRefId);
+            }
+            return clientRefId;
+        }
+
+        function clearClientReferenceIdForCart(cartHash) {
+            const storageKey = 'mavyzo_client_ref_' + cartHash;
+            sessionStorage.removeItem(storageKey);
+        }
+
+        function clearAllClientReferenceIds() {
+            // Nettoie toutes les clés d'idempotence (utilisé après paiement réussi)
+            for (let i = sessionStorage.length - 1; i >= 0; i--) {
+                const key = sessionStorage.key(i);
+                if (key && key.startsWith('mavyzo_client_ref_')) {
+                    sessionStorage.removeItem(key);
+                }
+            }
+        }
+
         // Variables Stripe globales (3 Elements séparés)
         let stripe = null;
         let elements = null;
@@ -995,45 +1052,101 @@ function renderCart() {
         let cardExpiryElement = null;
         let cardCvcElement = null;
 
-        // Init Stripe au chargement
-        function initStripe() {
-            if (typeof Stripe !== 'undefined' && STRIPE_PUBLISHABLE_KEY) {
-                stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
-                elements = stripe.elements({
-                    appearance: {
-                        theme: 'stripe',
-                        variables: {
-                            colorPrimary: '#00b4ff',
-                            colorBackground: '#0a0a0a',
-                            colorText: '#fff',
-                            colorDanger: '#ff3131',
-                            fontFamily: 'inherit',
-                            spacingUnit: '4px',
-                            borderRadius: '6px'
-                        },
-                        rules: {
-                            '.Input': { border: '1px solid #333', boxShadow: 'none', background: '#0a0a0a' },
-                            '.Input:focus': { border: '1px solid #00b4ff', boxShadow: '0 0 0 2px rgba(0, 180, 255, 0.2)' },
-                            '.Input--invalid': { border: '1px solid #ff3131' },
-                            '.Label': { color: '#ccc', fontSize: '13px', fontWeight: '500' },
-                            '.ErrorMessage': { color: '#ff6b6b', fontSize: '12px' }
-                        }
-                    }
-                });
-                cardNumberElement = elements.create('cardNumber', {
-                    style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
-                });
-                cardExpiryElement = elements.create('cardExpiry', {
-                    style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
-                });
-                cardCvcElement = elements.create('cardCvc', {
-                    style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
-                });
-            }
+        // Identifiant du requestAnimationFrame en cours (pour annulation si fermeture avant montage)
+        let currentMountRAF = null;
+
+        // État du message de paiement — remplace currentErrorOwner + appMessages
+        // type: 'stripe' | 'app' | 'progress' | 'success' | 'none'
+        // owner: 'cardNumber' | 'cardExpiry' | 'cardCvc' | null (pour type 'stripe')
+        // isActivePayment: true si un paiement est en cours (empêche effacement à la fermeture)
+        const messageState = {
+            type: 'none',
+            owner: null,
+            isActivePayment: false
+        };
+
+        // Verrous pour opérations critiques
+        let isPaymentProcessing = false;  // true du fetch PI à la fin de confirmCardPayment
+        let isSubmitting = false;         // verrou anti-double-soumission (avant premier await)
+
+        // Définit le message et met à jour l'état de manière atomique
+        function setPaymentMessage(text, type, owner = null) {
+            const msgBox = document.getElementById('paymentMessage');
+            if (!msgBox) return;
+            msgBox.textContent = text;
+            msgBox.className = 'payment-message' + (type === 'error' || type === 'stripe' || type === 'app' ? ' error' : type === 'success' ? ' success' : '');
+            messageState.type = type;
+            messageState.owner = owner;
+            // Marque paiement actif pour les types progress
+            if (type === 'progress') messageState.isActivePayment = true;
         }
 
+        // Efface le message si les conditions sont remplies
+        // - Pour type 'stripe' : seulement si owner correspond (ou null = efface tout stripe)
+        // - Pour type 'app'/'progress'/'success' : jamais effacé par événement Stripe
+        function clearPaymentMessage(expectedOwner = null) {
+            // Ne rien faire si message n'est pas de type 'stripe' OU si owner ne correspond pas
+            if (messageState.type !== 'stripe') return;
+            if (expectedOwner !== null && messageState.owner !== expectedOwner) return;
+            const msgBox = document.getElementById('paymentMessage');
+            if (!msgBox) return;
+            msgBox.textContent = '';
+            msgBox.className = 'payment-message';
+            messageState.type = 'none';
+            messageState.owner = null;
+        }
+
+        // Réinitialise l'état pour nouvelle tentative de paiement (garde isActivePayment si vrai)
+        function resetPaymentMessageState() {
+            messageState.type = 'none';
+            messageState.owner = null;
+            // NE PAS toucher à isActivePayment ici : géré par setPaymentMessage('progress')
+        }
+
+        // Références des handlers Stripe pour nettoyage via .off()
+        // Une fonction par élément × type d'événement = 3 éléments × 3 événements = 9 handlers
+        const stripeHandlers = {
+            cardNumber: { change: null, focus: null, blur: null },
+            cardExpiry: { change: null, focus: null, blur: null },
+            cardCvc: { change: null, focus: null, blur: null }
+        };
+
         // Ouvre modal + monte les 3 Stripe Elements
+        // Mutex pour éviter ouvertures concurrentes
+        let _openOrderForm_executing = false;
+        let _openOrderForm_cancelled = false;
+        let _openOrderForm_promise = null;
+
         function openOrderForm() {
+            // Mutex : si déjà en cours, on retourne la promesse existante
+            if (_openOrderForm_executing) {
+                return _openOrderForm_promise;
+            }
+
+            _openOrderForm_executing = true;
+            _openOrderForm_cancelled = false;
+
+            _openOrderForm_promise = openOrderFormNow();
+
+            return _openOrderForm_promise.finally(() => {
+                _openOrderForm_executing = false;
+                _openOrderForm_promise = null;
+            });
+        }
+
+        async function openOrderFormNow() {
+            // Attend que Stripe soit initialisé (promesse unique, partagée)
+            try {
+                await initStripeDeferred();
+            } catch (err) {
+                console.error('Échec initialisation Stripe:', err);
+                setPaymentMessage('Service de paiement indisponible, réessayez plus tard', 'app');
+                return;
+            }
+
+            // Détection annulation : si closeOrderForm() a été appelé pendant l'attente
+            if (_openOrderForm_cancelled) return;
+
             closeCart();
             const modal = document.getElementById('orderModal');
             const form = document.getElementById('orderForm');
@@ -1042,60 +1155,122 @@ function renderCart() {
 
             if (!modal || !form) return;
 
-            // Reset UI
+            // Reset UI — NE PAS effacer msgBox ici si paiement actif ou message applicatif
+            // Le messageState gère la préservation selon son type
+            if (!messageState.isActivePayment && messageState.type === 'stripe' && messageState.owner === null) {
+                // Erreur Stripe orpheline (plus de propriétaire) : on l'efface pour nouvelle session
+                clearPaymentMessage(null);
+            }
+            // Si messageState.type === 'app' | 'progress' | 'success' : on préserve le message
+
             form.reset();
-            msgBox.textContent = '';
-            msgBox.className = 'payment-message';
             payBtn.disabled = false;
             payBtn.textContent = 'Payer';
 
-            // Démonte proprement avant de remonter
-            if (cardNumberElement) cardNumberElement.unmount();
-            if (cardExpiryElement) cardExpiryElement.unmount();
-            if (cardCvcElement) cardCvcElement.unmount();
-
-            // Monte les 3 Elements séparés
-            if (cardNumberElement) {
-                const container = document.getElementById('card-number-element');
-                if (container) {
-                    container.innerHTML = '';
-                    cardNumberElement.mount('#card-number-element');
-                    cardNumberElement.on('change', (event) => {
-                        if (event.error) { msgBox.textContent = event.error.message; msgBox.className = 'payment-message error'; }
-                        else if (!msgBox.textContent.includes('CVC') && !msgBox.textContent.includes('expiration')) { msgBox.textContent = ''; msgBox.className = 'payment-message'; }
-                    });
-                    cardNumberElement.on('focus', () => container.classList.add('StripeElement--focus'));
-                    cardNumberElement.on('blur', () => container.classList.remove('StripeElement--focus'));
-                }
-            }
-            if (cardExpiryElement) {
-                const container = document.getElementById('card-expiry-element');
-                if (container) {
-                    container.innerHTML = '';
-                    cardExpiryElement.mount('#card-expiry-element');
-                    cardExpiryElement.on('change', (event) => {
-                        if (event.error) { msgBox.textContent = event.error.message; msgBox.className = 'payment-message error'; }
-                    });
-                    cardExpiryElement.on('focus', () => container.classList.add('StripeElement--focus'));
-                    cardExpiryElement.on('blur', () => container.classList.remove('StripeElement--focus'));
-                }
-            }
-            if (cardCvcElement) {
-                const container = document.getElementById('card-cvc-element');
-                if (container) {
-                    container.innerHTML = '';
-                    cardCvcElement.mount('#card-cvc-element');
-                    cardCvcElement.on('change', (event) => {
-                        if (event.error) { msgBox.textContent = event.error.message; msgBox.className = 'payment-message error'; }
-                    });
-                    cardCvcElement.on('focus', () => container.classList.add('StripeElement--focus'));
-                    cardCvcElement.on('blur', () => container.classList.remove('StripeElement--focus'));
-                }
+            // 1. Annule RAF précédent si existant (évite double montage si clics rapides)
+            if (currentMountRAF) {
+                cancelAnimationFrame(currentMountRAF);
+                currentMountRAF = null;
             }
 
+            // 2. Démonte proprement les éléments Stripe + nettoie leurs handlers
+            const stripeElements = [
+                { element: cardNumberElement, key: 'cardNumber' },
+                { element: cardExpiryElement, key: 'cardExpiry' },
+                { element: cardCvcElement, key: 'cardCvc' }
+            ];
+
+            stripeElements.forEach(({ element, key }) => {
+                if (!element) return;
+                try {
+                    element.unmount();
+                } catch (e) {
+                    // Ignore : déjà démonté ou jamais monté
+                }
+                // Nettoie les handlers Stripe enregistrés précédemment
+                const handlers = stripeHandlers[key];
+                if (handlers.change) {
+                    try { element.off('change', handlers.change); } catch (e) { /* ignore */ }
+                }
+                if (handlers.focus) {
+                    try { element.off('focus', handlers.focus); } catch (e) { /* ignore */ }
+                }
+                if (handlers.blur) {
+                    try { element.off('blur', handlers.blur); } catch (e) { /* ignore */ }
+                }
+                // Réinitialise les références
+                handlers.change = null;
+                handlers.focus = null;
+                handlers.blur = null;
+            });
+
+            // 3. Affiche modal AVANT le montage (iframe Stripe nécessite un conteneur visible)
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
             document.body.style.overflow = 'hidden';
+
+            // 4. Monte au prochain frame (après paint du modal)
+            currentMountRAF = requestAnimationFrame(() => {
+                currentMountRAF = null;
+
+                // Vérifie que modal encore visible (pas fermé entre-temps via closeOrderForm/Échap/backdrop)
+                if (!modal.classList.contains('is-open')) return;
+
+                // Helper pour monter un Element sur son conteneur DOM direct
+                const mountElement = (element, key, containerId) => {
+                    if (!element) {
+                        console.error('[DIAG] Stripe Element absent:', containerId);
+                        return;
+                    }
+                    const container = document.getElementById(containerId);
+                    if (!container) {
+                        console.warn(`Conteneur Stripe introuvable: #${containerId}`);
+                        return;
+                    }
+
+                    try {
+                        console.log('[DIAG] mountElement start:', containerId);
+                        // mount() avec l'élément DOM direct (pas de sélecteur string)
+                        element.mount(container);
+                        console.log('[DIAG] mountElement success:', containerId);
+                    } catch (e) {
+                        console.error('[DIAG] mountElement FAILED:', containerId, e);
+                        setPaymentMessage(`Erreur d'affichage du champ de paiement (${containerId})`, 'app');
+                        return;
+                    }
+
+                    // --- Handlers Stripe : on stocke la référence pour pouvoir .off() plus tard ---
+
+                    // change : erreur de saisie / correction
+                    const onChange = (event) => {
+                        if (event.error) {
+                            // Nouvelle erreur Stripe : cet élément devient le propriétaire
+                            setPaymentMessage(event.error.message, 'stripe', key);
+                        } else {
+                            // Champ devenu valide : n'efface que SI c'est notre erreur Stripe
+                            clearPaymentMessage(key);
+                        }
+                        // Si event.error === null MAIS messageState.owner !== key :
+                        // un autre élément a affiché une erreur après celui-ci → on ne touche pas au message
+                        // (géré par clearPaymentMessage qui vérifie l'owner)
+                    };
+                    element.on('change', onChange);
+                    stripeHandlers[key].change = onChange;
+
+                    // focus / blur : feedback visuel sur le conteneur
+                    const onFocus = () => container.classList.add('StripeElement--focus');
+                    const onBlur = () => container.classList.remove('StripeElement--focus');
+                    element.on('focus', onFocus);
+                    element.on('blur', onBlur);
+                    stripeHandlers[key].focus = onFocus;
+                    stripeHandlers[key].blur = onBlur;
+                };
+
+                mountElement(cardNumberElement, 'cardNumber', 'card-number-element');
+                mountElement(cardExpiryElement, 'cardExpiry', 'card-expiry-element');
+                mountElement(cardCvcElement, 'cardCvc', 'card-cvc-element');
+            });
+
             setTimeout(() => document.getElementById('customerName')?.focus(), 100);
         }
 
@@ -1104,34 +1279,109 @@ function renderCart() {
             const modal = document.getElementById('orderModal');
             if (!modal) return;
 
-            // Démonte les Elements Stripe
-            if (cardNumberElement) cardNumberElement.unmount();
-            if (cardExpiryElement) cardExpiryElement.unmount();
-            if (cardCvcElement) cardCvcElement.unmount();
+            // Protection A5 : ne pas démonter les Elements pendant une opération de paiement active
+            // (fetch PI ou confirmCardPayment en cours) — éviter corruption Stripe
+            if (isPaymentProcessing) {
+                showToast('Paiement en cours, veuillez patienter…');
+                return;
+            }
 
+            // Signal d'annulation pour openOrderForm() en attente (Bloc 4 mutex)
+            _openOrderForm_cancelled = true;
+
+            // 1. Annule RAF en attente (évite montage après fermeture)
+            if (currentMountRAF) {
+                cancelAnimationFrame(currentMountRAF);
+                currentMountRAF = null;
+            }
+
+            // 2. Démonte les Elements Stripe + nettoie leurs handlers
+            const stripeElements = [
+                { element: cardNumberElement, key: 'cardNumber' },
+                { element: cardExpiryElement, key: 'cardExpiry' },
+                { element: cardCvcElement, key: 'cardCvc' }
+            ];
+
+            stripeElements.forEach(({ element, key }) => {
+                if (!element) return;
+                try {
+                    element.unmount();
+                } catch (e) {
+                    // Ignore : déjà démonté ou jamais monté
+                }
+                // Nettoie les handlers Stripe enregistrés
+                const handlers = stripeHandlers[key];
+                if (handlers.change) {
+                    try { element.off('change', handlers.change); } catch (e) { /* ignore */ }
+                }
+                if (handlers.focus) {
+                    try { element.off('focus', handlers.focus); } catch (e) { /* ignore */ }
+                }
+                if (handlers.blur) {
+                    try { element.off('blur', handlers.blur); } catch (e) { /* ignore */ }
+                }
+                handlers.change = null;
+                handlers.focus = null;
+                handlers.blur = null;
+            });
+
+            // 3. Ferme modal
             modal.classList.remove('is-open');
             modal.setAttribute('aria-hidden', 'true');
             document.body.style.overflow = '';
-            // Rouvrir le panier si des articles existent
+
+            // 4. Réinitialise l'état du message pour nouvelle session
+            // MAIS : ne pas effacer si paiement en cours (progress) ou succès
+            // Le message sera nettoyé au prochain openOrderForm ou handleOrderSubmit
+            if (!messageState.isActivePayment && messageState.type !== 'success') {
+                messageState.type = 'none';
+                messageState.owner = null;
+            }
+            // isActivePayment reste vrai jusqu'à succès ou échec final
+
+            // 5. Rouvrir le panier si des articles existent
             if (cart.items.length > 0) {
                 openCart();
             }
+            // NE PAS nettoyer client_reference_id ici :
+            // il est lié au hash du panier et doit survivre si l'utilisateur rouvre le modal pour réessayer
+            // Il sera nettoyé uniquement après paiement réussi (clearAllClientReferenceIds)
         }
 
         // Soumission + paiement
         async function handleOrderSubmit(e) {
             e.preventDefault();
 
+            // Verrou anti-double-soumission (A4) — avant tout await
+            if (isSubmitting) return;
+            isSubmitting = true;
+
+            // Réinitialise l'état message pour nouvelle tentative
+            resetPaymentMessageState();
+
             const form = e.target;
             const payBtn = document.getElementById('payButton');
-            const msgBox = document.getElementById('paymentMessage');
 
             // Vérifie que Stripe est initialisé
             if (!stripe) {
-                msgBox.textContent = 'Stripe pas prêt, réessayez dans 1s';
-                msgBox.className = 'payment-message error';
-                payBtn.disabled = false;
-                payBtn.textContent = 'Réessayer';
+                setPaymentMessage('Service de paiement en cours de chargement…', 'progress');
+                payBtn.disabled = true;
+                payBtn.textContent = 'Chargement…';
+                isSubmitting = false;
+
+                // S1/S2: Vrai retry Stripe — relance initStripeDeferred automatiquement
+                initStripeDeferred()
+                    .then(() => {
+                        payBtn.disabled = false;
+                        payBtn.textContent = 'Payer';
+                        setPaymentMessage('Prêt — cliquez pour payer', 'app');
+                    })
+                    .catch(() => {
+                        setPaymentMessage('Service de paiement indisponible', 'app');
+                        payBtn.disabled = false;
+                        payBtn.textContent = 'Réessayer';
+                        // payBtn.onclick = () => handleOrderSubmit(new Event('submit')); // SUPPRIMÉ: redondant avec type="submit"
+                    });
                 return;
             }
 
@@ -1144,28 +1394,67 @@ function renderCart() {
             const shippingPostalCode = form.shippingPostalCode.value.trim();
             const shippingCountry = form.shippingCountry.value.trim();
 
-            if (!name || !email) { msgBox.textContent = 'Nom et email requis'; msgBox.className = 'payment-message error'; return; }
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { msgBox.textContent = 'Email invalide'; msgBox.className = 'payment-message error'; return; }
-            if (!phone) { msgBox.textContent = 'Téléphone requis'; msgBox.className = 'payment-message error'; return; }
-            if (!shippingAddress || !shippingCity || !shippingPostalCode || !shippingCountry) { msgBox.textContent = 'Adresse de livraison incomplète'; msgBox.className = 'payment-message error'; return; }
+            if (!name || !email) { setPaymentMessage('Nom et email requis', 'app'); isSubmitting = false; return; }
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setPaymentMessage('Email invalide', 'app'); isSubmitting = false; return; }
+            if (!phone) { setPaymentMessage('Téléphone requis', 'app'); isSubmitting = false; return; }
+            if (!shippingAddress || !shippingCity || !shippingPostalCode || !shippingCountry) { setPaymentMessage('Adresse de livraison incomplète', 'app'); isSubmitting = false; return; }
 
-            const cartItems = JSON.parse(localStorage.getItem('mavyzo_market_cart') || '{"items":[]}').items || [];
-            if (cartItems.length === 0) { msgBox.textContent = 'Panier vide'; msgBox.className = 'payment-message error'; return; }
+            // A7/A8/A9 : Protection des opérations synchrones risquées après isSubmitting = true
+            // Toute exception ici doit libérer isSubmitting et permettre une nouvelle tentative
+            let cartItems;
+            let totalCents;
+            let clientReferenceId;
+            try {
+                // A7: Lecture panier + JSON.parse — peut lever SyntaxError si corrompu
+                cartItems = JSON.parse(localStorage.getItem('mavyzo_market_cart') || '{"items":[]}').items || [];
+                if (cartItems.length === 0) { setPaymentMessage('Panier vide', 'app'); isSubmitting = false; return; }
 
-            const totalCents = Math.round(cartItems.reduce((sum, i) => {
-                const product = products.find(p => p.id === i.productId);
-                return sum + (product ? product.price * i.quantity : 0);
-            }, 0) * 100);
+                // A9: Vérification catalogue disponible avant utilisation
+                if (!Array.isArray(products) || products.length === 0) {
+                    throw new Error('Catalogue produits indisponible');
+                }
+
+                // C1/C2: Validation quantités côté client (entier 1-99) avant envoi Worker
+                const MAX_QTY = 99;
+                for (const item of cartItems) {
+                    const qty = item.quantity;
+                    if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) {
+                        setPaymentMessage(`Quantité invalide pour un produit (1-${MAX_QTY})`, 'app');
+                        isSubmitting = false;
+                        return;
+                    }
+                }
+
+                // Calcul total avec vérification produit existant — C3: rejet explicite produit inconnu
+                totalCents = Math.round(cartItems.reduce((sum, i) => {
+                    const product = products.find(p => p.id === i.productId);
+                    if (!product) {
+                        throw new Error(`Produit introuvable: ${i.productId}`);
+                    }
+                    return sum + product.price * i.quantity;
+                }, 0) * 100);
+
+                // A8: Génération référence client — computeCartHash + sessionStorage + crypto
+                clientReferenceId = getClientReferenceIdForCurrentCart();
+
+            } catch (syncErr) {
+                console.error('Erreur synchrone préparation commande:', syncErr);
+                setPaymentMessage(syncErr.message || 'Erreur préparation commande, veuillez réessayer', 'app');
+                isSubmitting = false;
+                return;
+            }
 
             payBtn.disabled = true;
             payBtn.textContent = 'Création paiement…';
-            msgBox.textContent = '';
-            msgBox.className = 'payment-message';
+            setPaymentMessage('', 'none'); // Clear pour nouvelle étape
 
             const customerData = { name, email, phone };
             const addressData = { shippingAddress, shippingAddress2, shippingCity, shippingPostalCode, shippingCountry };
 
             try {
+                // A5: Verrou opération de paiement (fetch PI → confirmCardPayment)
+                isPaymentProcessing = true;
+
                 // Prépare les items pour le Worker
                 const workerItems = cartItems.map(i => {
                     const product = products.find(p => p.id === i.productId);
@@ -1178,19 +1467,51 @@ function renderCart() {
                     };
                 }).filter(Boolean);
 
-                const resp = await fetch(`${WORKER_URL}/api/create-payment-intent`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        items: workerItems,
-                        customer: customerData,
-                        shipping: addressData
-                    })
-                });
+                // W1: Timeout explicite sur le fetch Worker (15s)
+                const workerController = new AbortController();
+                const workerTimeoutId = setTimeout(() => workerController.abort(), 15000);
 
+                let resp;
+                try {
+                    resp = await fetch(`${WORKER_URL}/api/create-payment-intent`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            items: workerItems,
+                            customer: customerData,
+                            shipping: addressData,
+                            client_reference_id: clientReferenceId
+                        }),
+                        signal: workerController.signal
+                    });
+                } finally {
+                    clearTimeout(workerTimeoutId);
+                }
+
+                // W2: Vérification response.ok AVANT response.json()
+                if (!resp.ok) {
+                    let errMsg = `Erreur serveur (${resp.status})`;
+                    try {
+                        const data = await resp.json();
+                        errMsg = data.error || errMsg;
+                    } catch {
+                        // Ignore JSON parse error
+                    }
+                    // W3: Messages distincts selon code HTTP
+                    if (resp.status === 400) errMsg = 'Données invalides, vérifiez votre panier';
+                    else if (resp.status === 409) errMsg = 'Conflit détecté, réessayez';
+                    else if (resp.status >= 500) errMsg = 'Erreur serveur, réessayez dans quelques instants';
+                    throw new Error(errMsg);
+                }
                 const data = await resp.json();
-                if (!resp.ok || data.error) throw new Error(data.error || 'Erreur création paiement');
 
+                // W4: Validation clientSecret format avant stripe.confirmCardPayment
+                if (!data.clientSecret || typeof data.clientSecret !== 'string' || !data.clientSecret.startsWith('pi_') || !data.clientSecret.includes('_secret_')) {
+                    throw new Error('Réponse serveur invalide (clientSecret manquant ou mal formé)');
+                }
+
+                // Marque paiement actif — empêche effacement à la fermeture
+                setPaymentMessage('Paiement en cours…', 'progress');
                 payBtn.textContent = 'Paiement en cours…';
 
                 const { error, paymentIntent } = await stripe.confirmCardPayment(
@@ -1212,20 +1533,27 @@ function renderCart() {
                     } }
                 );
 
+                // A3 + A5: Libération verrous — TOUS les chemins terminaux
+                isPaymentProcessing = false;
+                messageState.isActivePayment = false;
+                isSubmitting = false;
+
                 if (error) {
-                    msgBox.textContent = error.message;
-                    msgBox.className = 'payment-message error';
+                    // Erreur Stripe API — type 'app' car gérée par notre code, pas par onChange
+                    setPaymentMessage(error.message, 'app');
                     payBtn.disabled = false;
                     payBtn.textContent = 'Réessayer';
+                    // C1/S1/S2: Vrai bouton retry — le formulaire onsubmit gère la resoumission
+                    // payBtn.onclick = () => handleOrderSubmit(new Event('submit')); // SUPPRIMÉ: redondant avec type="submit"
                     return;
                 }
 
                 // Succès — Webhook fera Sheets + Emails
+                setPaymentMessage('Paiement validé !', 'success');
                 payBtn.textContent = 'Paiement réussi ✓';
-                msgBox.textContent = 'Paiement validé !';
-                msgBox.className = 'payment-message success';
 
                 localStorage.removeItem('mavyzo_market_cart');
+                clearAllClientReferenceIds(); // Nettoie toutes les clés d'idempotence après succès
                 cart.items = [];
                 cart.count = 0;
                 saveCart();
@@ -1235,17 +1563,23 @@ function renderCart() {
                 showToast(`Commande confirmée ! Réf: PI-${paymentIntent.id.slice(-8).toUpperCase()}`);
 
             } catch (err) {
+                // A3 + A5: Libération verrous dans catch aussi
+                isPaymentProcessing = false;
+                messageState.isActivePayment = false;
+                isSubmitting = false;
+
                 console.error('Payment error:', err);
-                msgBox.textContent = err.message || 'Erreur inattendue';
-                msgBox.className = 'payment-message error';
+                setPaymentMessage(err.message || 'Erreur inattendue', 'app');
                 payBtn.disabled = false;
                 payBtn.textContent = 'Réessayer';
+                // C1/S1/S2: Vrai bouton retry — le formulaire onsubmit gère la resoumission
+                // payBtn.onclick = () => handleOrderSubmit(new Event('submit')); // SUPPRIMÉ: redondant avec type="submit"
             }
         }
 
         function showToast(msg) {
             const toast = document.createElement('div');
-            toast.className = 'toast';
+            toast.className = 'order-toast';
             toast.textContent = msg;
             document.body.appendChild(toast);
             setTimeout(() => toast.classList.add('show'), 10);
@@ -1269,8 +1603,197 @@ function renderCart() {
             }
         });
 
-        // Initialiser Stripe au chargement
-        initStripe();
+        // === BLOC 2 : INITIALISATION STRIPE DIFFÉRÉE (race condition corrigée) ===
+        let _stripeInitPromise = null;
+        let _stripeInitVersion = 0;
+
+        function initStripeDeferred() {
+            if (_stripeInitPromise) return _stripeInitPromise;
+
+            _stripeInitVersion++;
+            const myVersion = _stripeInitVersion;
+
+            let _settled = false;
+            let _retryTimeoutId = null;
+            let _globalTimeoutId = null;
+            let _scriptTag = null;
+            let _loadHandled = false;
+            const GLOBAL_TIMEOUT_MS = 10000;
+            const MAX_RETRIES = 2;
+            let attempt = 0;
+
+            let localStripe = null;
+            let localElements = null;
+            let localCardNumber = null;
+            let localCardExpiry = null;
+            let localCardCvc = null;
+
+            let resolvePromise;
+            let rejectPromise;
+
+            const thisPromise = new Promise((resolve, reject) => {
+                resolvePromise = resolve;
+                rejectPromise = reject;
+            });
+
+            _stripeInitPromise = thisPromise;
+
+            queueMicrotask(() => {
+                function clearAllTimeouts() {
+                    if (_retryTimeoutId) { clearTimeout(_retryTimeoutId); _retryTimeoutId = null; }
+                    if (_globalTimeoutId) { clearTimeout(_globalTimeoutId); _globalTimeoutId = null; }
+                }
+
+                function cleanupLocalObjects() {
+                    try { if (localCardCvc) localCardCvc.destroy(); } catch (e) {}
+                    try { if (localCardExpiry) localCardExpiry.destroy(); } catch (e) {}
+                    try { if (localCardNumber) localCardNumber.destroy(); } catch (e) {}
+
+                    localStripe = null;
+                    localElements = null;
+                    localCardNumber = null;
+                    localCardExpiry = null;
+                    localCardCvc = null;
+                }
+
+                function settleOnce() {
+                    if (_settled) return false;
+                    _settled = true;
+                    _loadHandled = true;
+                    clearAllTimeouts();
+                    if (_scriptTag) {
+                        _scriptTag.removeEventListener('load', onLoad);
+                        _scriptTag.removeEventListener('error', onError);
+                    }
+                    return true;
+                }
+
+                function doReject(err) {
+                    if (!settleOnce()) return;
+                    cleanupLocalObjects();
+                    if (_stripeInitPromise === thisPromise) {
+                        _stripeInitPromise = null;
+                    }
+                    rejectPromise(err);
+                }
+
+                function doResolve() {
+                    if (!settleOnce()) return;
+                    if (_stripeInitVersion !== myVersion) {
+                        cleanupLocalObjects();
+                        if (_stripeInitPromise === thisPromise) {
+                            _stripeInitPromise = null;
+                        }
+                        rejectPromise(new Error('Initialisation Stripe remplacée par version plus récente'));
+                        return;
+                    }
+                    stripe = localStripe;
+                    elements = localElements;
+                    cardNumberElement = localCardNumber;
+                    cardExpiryElement = localCardExpiry;
+                    cardCvcElement = localCardCvc;
+                    resolvePromise();
+                }
+
+                function tryInit() {
+                    if (_settled) return;
+                    attempt++;
+
+                    if (typeof Stripe === 'undefined' || !STRIPE_PUBLISHABLE_KEY) {
+                        if (attempt <= MAX_RETRIES) {
+                            _retryTimeoutId = setTimeout(tryInit, 100);
+                        } else {
+                            doReject(new Error('Stripe non disponible ou clé manquante après ' + MAX_RETRIES + ' tentatives'));
+                        }
+                        return;
+                    }
+
+                    try {
+                        localStripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+                        localElements = localStripe.elements({
+                            appearance: {
+                                theme: 'stripe',
+                                variables: {
+                                    colorPrimary: '#00b4ff',
+                                    colorBackground: '#0a0a0a',
+                                    colorText: '#fff',
+                                    colorDanger: '#ff3131',
+                                    fontFamily: 'inherit',
+                                    spacingUnit: '4px',
+                                    borderRadius: '6px'
+                                },
+                                rules: {
+                                    '.Input': { border: '1px solid #333', boxShadow: 'none', background: '#0a0a0a' },
+                                    '.Input:focus': { border: '1px solid #00b4ff', boxShadow: '0 0 0 2px rgba(0, 180, 255, 0.2)' },
+                                    '.Input--invalid': { border: '1px solid #ff3131' },
+                                    '.Label': { color: '#ccc', fontSize: '13px', fontWeight: '500' },
+                                    '.ErrorMessage': { color: '#ff6b6b', fontSize: '12px' }
+                                }
+                            }
+                        });
+                        localCardNumber = localElements.create('cardNumber', {
+                            style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
+                        });
+                        localCardExpiry = localElements.create('cardExpiry', {
+                            style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
+                        });
+                        localCardCvc = localElements.create('cardCvc', {
+                            style: { base: { fontSize: '16px', color: '#fff', '::placeholder': { color: '#666' } }, invalid: { color: '#ff6b6b' } }
+                        });
+
+                        doResolve();
+                    } catch (err) {
+                        cleanupLocalObjects();
+                        if (!_settled && attempt <= MAX_RETRIES) {
+                            _retryTimeoutId = setTimeout(tryInit, 100);
+                        } else {
+                            doReject(err);
+                        }
+                    }
+                }
+
+                _globalTimeoutId = setTimeout(() => {
+                    doReject(new Error('Timeout initialisation Stripe.js (' + GLOBAL_TIMEOUT_MS + 'ms)'));
+                }, GLOBAL_TIMEOUT_MS);
+
+                _scriptTag = document.querySelector('script[src*="js.stripe.com"]');
+                if (!_scriptTag) {
+                    doReject(new Error('Balise script Stripe introuvable'));
+                    return;
+                }
+
+                function onLoad() {
+                    if (_loadHandled || _settled) return;
+                    _loadHandled = true;
+                    _scriptTag.removeEventListener('load', onLoad);
+                    _scriptTag.removeEventListener('error', onError);
+                    if (!_settled) tryInit();
+                }
+
+                function onError() {
+                    if (_loadHandled || _settled) return;
+                    _loadHandled = true;
+                    _scriptTag.removeEventListener('load', onLoad);
+                    _scriptTag.removeEventListener('error', onError);
+                    doReject(new Error('Échec chargement script Stripe.js (network/CSP)'));
+                }
+
+                _scriptTag.addEventListener('load', onLoad);
+                _scriptTag.addEventListener('error', onError);
+
+                if (typeof Stripe !== 'undefined') {
+                    onLoad();
+                }
+            });
+
+            return _stripeInitPromise;
+        }
+
+        // Lancement dès le chargement de la page
+        initStripeDeferred().catch(() => {
+            // Rejet silencieux : _stripeInitPromise déjà remise à null par doReject
+            // Prochaine ouverture (openOrderForm) relancera initStripeDeferred() -> nouvelle tentative
+        });
 
         // === HELPERS DÉMO (console navigateur F12) ===
         // Tapez dans la console : afficherCommandesDemo()
@@ -1295,9 +1818,22 @@ function renderCart() {
             console.log('🗑️ Commandes démo effacées');
         };
 
+        // === Ouverture de la boutique depuis la page d'accueil ===
+        const enterStoreBtn = document.getElementById('enterStoreBtn');
+        const homeLanding = document.getElementById('homeLanding');
+
+        if (enterStoreBtn && homeLanding) {
+            enterStoreBtn.addEventListener('click', () => {
+                homeLanding.remove();
+                document.body.classList.remove('landing-active');
+            });
+        }
+
+
     </script>
 </body>
 </html>
+
 
 
 
